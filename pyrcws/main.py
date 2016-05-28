@@ -34,8 +34,12 @@ TRANSACTION_TYPE = {
     'shop': '08',
 }
 
+def _get_connection(debug=False):
+    if debug:
+        return Client(WSDL_SOAP_URL_TEST, location=SOAP_URL_TEST, cache=None)
+    return Client(WSDL_SOAP_URL, location=SOAP_URL, cache=None)
 
-class GetAuthorizedException(Exception):
+class AttemptException(Exception):
     def __init__(self, codret, msg):
         self.codret = codret
         self.msg = msg
@@ -90,15 +94,10 @@ class PaymentAttempt(object):
         self.exp_year = exp_year
         self.card_holders_name = card_holders_name
 
-        self.client = self._get_connection(debug)
+        self.client = _get_connection(debug)
         self._authorized = False
 
         self.debug = debug
-
-    def _get_connection(self, debug=False):
-        if debug:
-            return Client(WSDL_SOAP_URL_TEST, location=SOAP_URL_TEST, cache=None)
-        return Client(WSDL_SOAP_URL, location=SOAP_URL, cache=None)
 
     def _get_total(self):
         # sandbox transactions must be total = 0.01
@@ -119,7 +118,7 @@ class PaymentAttempt(object):
             try:
                 ret = self.client.service.GetAuthorizedTst(*args)
             except WebFault, e:
-                raise GetAuthorizedException(0, 'Webfault. %s' % e)
+                raise AttemptException(0, 'Webfault. %s' % e)
         else:
             ret = self.client.service.GetAuthorized(*args)
 
@@ -134,7 +133,7 @@ class PaymentAttempt(object):
         self._authorized = True
 
         if self.codret:
-            raise GetAuthorizedException(int(self.codret), self.msgret)
+            raise AttemptException(int(self.codret), self.msgret)
 
         return True
 
@@ -152,7 +151,7 @@ class PaymentAttempt(object):
             try:
                 ret = self.client.service.ConfirmTxnTst(*args)
             except WebFault, e:
-                raise GetAuthorizedException(0, 'Webfault. %s' % e)
+                raise AttemptException(0, 'Webfault. %s' % e)
         else:
             ret = self.client.service.ConfirmTxn(*args)
 
@@ -171,3 +170,48 @@ class PaymentAttempt(object):
         req = urllib2.Request(RECEIPT_URL, urllib.urlencode(values))
         response = urllib2.urlopen(req)
         return response.read()
+
+class ReversalAttempt(object):
+    '''
+    total: total amount, including shipping and taxes (Decimal instance)
+    affiliation_id: your affiliation code at redecard
+    numcv: numero do comprovante de venda (NSU)
+    numautor: numero de autorizacao
+    concentrador: n/a enviar parametros com valor vazio
+    usr: codigo do usuario komerci
+    pwd: senha de acesso do usuario komerci
+    '''
+
+    def __init__(self, total, affiliation_id, numcv, numautor, usr, pwd, debug=False):
+
+        self.total = total
+        self.affiliation_id = affiliation_id
+        self.numcv = numcv
+        self.numautor = numautor
+        self.usr = usr
+        self.pwd = pwd
+
+        self.client = _get_connection(debug)
+
+        self.debug = debug
+
+    def reverse(self, concentrador=''):
+
+        args = (self.total, self.affiliation_id, self.numcv,
+                self.numautor, concentrador, self.usr, self.pwd)
+
+        if self.debug:
+            try:
+                ret = self.client.service.VoidTransactionTst(*args)
+            except WebFault, e:
+                raise AttemptException(0, 'Webfault. %s' % e)
+        else:
+            ret = self.client.service.VoidTransaction(*args)
+
+        self.codret = int(ret.CONFIRMATION.root.codret or 0)
+        self.msgret = urllib.unquote_plus(ret.CONFIRMATION.root.msgret or '')
+
+        if self.codret:
+            raise AttemptException(int(self.codret), self.msgret)
+
+        return True

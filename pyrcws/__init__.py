@@ -1,1 +1,1 @@
-from main import GetAuthorizedException, PaymentAttempt
+from main import AttemptException, PaymentAttempt, ReversalAttempt
